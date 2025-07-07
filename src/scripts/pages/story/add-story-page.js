@@ -1,7 +1,9 @@
 // src/scripts/pages/story/add-story-page.js
+
 import { Camera } from '../../utils/camera';
 import { MapComponent } from '../../utils/map-component';
 import AddStoryPresenter from '../../presenters/add-story-presenter';
+import { addStory } from '../../data/story-db'; // <--- IMPOR addStory dari modul IndexedDB Anda
 
 class AddStoryPage {
     constructor() {
@@ -10,6 +12,7 @@ class AddStoryPage {
         this._currentLatLng = null;
         this._photoBlob = null;
         this._marker = null;
+        this._addStoryForm = null; // Tambahkan ini agar form bisa diakses di luar constructor
     }
 
     async render(container) {
@@ -46,7 +49,7 @@ class AddStoryPage {
     }
 
     _setupFormListeners() {
-        const form = document.getElementById('addStoryForm');
+        this._addStoryForm = document.getElementById('addStoryForm'); // Inisialisasi di sini
         const cameraFeed = document.getElementById('cameraFeed');
         const startCameraButton = document.getElementById('startCameraButton');
         const takePictureButton = document.getElementById('takePictureButton');
@@ -102,7 +105,8 @@ class AddStoryPage {
             }
         });
 
-        form.addEventListener('submit', async (event) => {
+        // MODIFIKASI PENTING DI SINI:
+        this._addStoryForm.addEventListener('submit', async (event) => { // Menggunakan this._addStoryForm
             event.preventDefault();
 
             if (!this._photoBlob) {
@@ -117,18 +121,42 @@ class AddStoryPage {
 
             const description = document.getElementById('description').value;
 
-            const response = await AddStoryPresenter.submitStory({
+            // ===== BAGIAN UNTUK MENGIRIM KE API =====
+            const apiResponse = await AddStoryPresenter.submitStory({
                 description,
                 photo: this._photoBlob,
                 lat: this._currentLatLng.lat,
                 lon: this._currentLatLng.lng,
             });
 
-            if (response.success) {
-                alert('Story added successfully!');
-                window.location.hash = '/stories';
+            if (apiResponse.success) {
+                alert('Story added successfully to server!');
+                // ===== BAGIAN UNTUK MENYIMPAN KE INDEXEDDB (SETELAH BERHASIL KE SERVER) =====
+                try {
+                    // Pastikan Anda mendapatkan ID dari server jika ada, atau gunakan ID unik baru
+                    // Jika API mengembalikan ID baru, gunakan ID tersebut untuk menyimpan di IndexedDB
+                    const storyDataToSave = {
+                        id: apiResponse.storyId || `local-story-${Date.now()}`, // Gunakan ID dari API jika ada, atau ID lokal
+                        description: description,
+                        lat: this._currentLatLng.lat,
+                        lon: this._currentLatLng.lng,
+                        photoUrl: apiResponse.photoUrl || URL.createObjectURL(this._photoBlob), // Jika API mengembalikan URL foto
+                        createdAt: new Date().toISOString(), // Tambahkan timestamp
+                        // Tambahkan properti lain yang relevan dari API response
+                    };
+                    await addStory(storyDataToSave);
+                    alert('Cerita juga berhasil disimpan secara lokal!');
+                } catch (dbError) {
+                    console.error('Gagal menyimpan cerita ke IndexedDB:', dbError);
+                    alert('Cerita berhasil dikirim ke server, tapi gagal disimpan secara lokal.');
+                }
+                // =========================================================================
+
+                window.location.hash = '/stories'; // Redirect setelah sukses
             } else {
-                alert('Failed to add story: ' + response.message);
+                alert('Failed to add story to server: ' + apiResponse.message);
+                // Opsi: Jika gagal ke server, Anda bisa tetap simpan ke IndexedDB
+                // dan menandainya sebagai 'needs_sync' untuk background sync nanti.
             }
         });
     }
